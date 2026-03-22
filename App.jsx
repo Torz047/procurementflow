@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPA_URL = "https://fmpjuqcvqtiujyfvvdmg.supabase.co";
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZtcGp1cWN2cXRpdWp5ZnZ2ZG1nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIzMzQ0NDAsImV4cCI6MjA4NzkxMDQ0MH0.btw88qY_-2SZhfvppGWJ7dilZ3zihiIfIu1Jx_N4S34";
@@ -1795,7 +1795,14 @@ function LogisticsView({ user, purchasingItems, pos, addNotif, loadAll }) {
   const [arriving, setArriving] = useState({});
   const [delivDate, setDelivDate] = useState({});
 
-  const confirmedItems = purchasingItems.filter(i=>i.status==="confirmed"||i.status==="arrived");
+  // Show ALL purchasing items — status column may not exist yet
+  // Items with supplier_confirmation_locked=true are treated as confirmed
+  const getItemStatus = (i) => i.status || (i.supplierConfirmationLocked ? "confirmed" : "pending");
+  const confirmedItems = purchasingItems.filter(i => {
+    const st = getItemStatus(i);
+    return st === "confirmed" || st === "arrived" || i.supplierConfirmation || i.supplierConfirmationLocked;
+  });
+  const allPurchasingItems = purchasingItems; // show all in a second table
   const markArrived = async (item) => {
     const date = delivDate[item.id]||today();
     setArriving(a=>({...a,[item.id]:true}));
@@ -1831,52 +1838,70 @@ function LogisticsView({ user, purchasingItems, pos, addNotif, loadAll }) {
     r.readAsDataURL(file);
   };
 
+  // Reusable row renderer
+  const ItemRow = ({item}) => {
+    const st = item.status||(item.supplierConfirmationLocked?"confirmed":"pending");
+    return (
+      <tr key={item.id}>
+        <td style={{color:"#2568FB",fontWeight:600,fontSize:11}}>{item.purchasingNo||"—"}</td>
+        <td style={{fontSize:11}}>{item.poNo||"—"}</td>
+        <td><span className="badge byellow" style={{fontSize:9}}>{item.supplier||"—"}</span></td>
+        <td>{item.drawingNumber||"—"}</td>
+        <td style={{fontSize:11}}>{item.description||"—"}</td>
+        <td style={{color:"#22d3a0",fontWeight:700}}>{item.neededQty||"—"}</td>
+        <td style={{color:"#2568FB",fontSize:11}}>{item.supplierConfirmation||"—"}</td>
+        <td>
+          {st==="arrived"
+            ?<span style={{color:"#22d3a0",fontSize:11,fontWeight:600}}>✓ {item.deliveredDate}</span>
+            :<div style={{display:"flex",gap:5,alignItems:"center"}}>
+              <input className="fi" type="date" style={{padding:"4px 6px",fontSize:11,width:130}} value={delivDate[item.id]||today()} onChange={e=>setDelivDate(d=>({...d,[item.id]:e.target.value}))}/>
+              <button className="btn b-green btn-xs" disabled={arriving[item.id]} onClick={()=>markArrived(item)}>Mark Arrived</button>
+            </div>
+          }
+        </td>
+        <td>
+          {item.invoiceAttachment
+            ?<a href={item.invoiceAttachment.data} download={item.invoiceAttachment.name} style={{color:"#2568FB",fontSize:11,textDecoration:"none"}}><Icon name="file" size={12}/> {item.invoiceAttachment.name.slice(0,12)}</a>
+            :<label style={{cursor:"pointer"}}><span className="btn b-gray btn-xs"><Icon name="clip" size={11}/>Attach</span><input type="file" style={{display:"none"}} accept=".pdf,.png,.jpg,.jpeg" onChange={e=>handleInvoice(item.id,e.target.files[0])}/></label>
+          }
+        </td>
+        <td>
+          {item.awbAttachment
+            ?<a href={item.awbAttachment.data} download={item.awbAttachment.name} style={{color:"#2568FB",fontSize:11,textDecoration:"none"}}><Icon name="file" size={12}/> {item.awbAttachment.name.slice(0,12)}</a>
+            :<label style={{cursor:"pointer"}}><span className="btn b-gray btn-xs"><Icon name="clip" size={11}/>Attach</span><input type="file" style={{display:"none"}} accept=".pdf,.png,.jpg,.jpeg" onChange={e=>handleAWB(item.id,e.target.files[0])}/></label>
+          }
+        </td>
+        <td><span className={`badge ${st==="arrived"?"bgreen":st==="confirmed"?"bteal":"byellow"}`}>{st==="arrived"?"Arrived":st==="confirmed"?"Confirmed":"Ordered"}</span></td>
+      </tr>
+    );
+  };
+
+  const tableHead = (
+    <thead><tr><th>Pur. #</th><th>PO #</th><th>Supplier</th><th>Drawing #</th><th>Description</th><th>Qty</th><th>Conf. Date</th><th>Actual Delivery</th><th>Invoice</th><th>AWB</th><th>Status</th></tr></thead>
+  );
+
   return (
     <div className="page">
       <FlowBanner active="s7" role={user?.role||""}/>
       <div style={{fontFamily:"Syne",fontSize:21,fontWeight:800,marginBottom:6}}>Logistics — Arrivals</div>
       <div style={{color:"#475569",fontSize:12,marginBottom:22}}>Step ⑦ — Mark items as arrived, attach invoices and AWB documents.</div>
+
+      {/* Confirmed orders — ready to mark arrived */}
       <div className="card">
         <div className="ctitle"><Icon name="truck"/>Confirmed Orders <span className="sub">({confirmedItems.length})</span></div>
-        {!confirmedItems.length?<div className="empty">No confirmed orders yet.</div>:(
-          <div className="tw"><table>
-            <thead><tr><th>Pur. #</th><th>PO #</th><th>Supplier</th><th>Drawing #</th><th>Description</th><th>Qty</th><th>Conf. Date</th><th>Actual Delivery</th><th>Invoice</th><th>AWB</th><th>Status</th></tr></thead>
-            <tbody>{confirmedItems.map(item=>(
-              <tr key={item.id}>
-                <td style={{color:"#2568FB",fontWeight:600,fontSize:11}}>{item.purchasingNo}</td>
-                <td style={{fontSize:11}}>{item.poNo}</td>
-                <td><span className="badge byellow" style={{fontSize:9}}>{item.supplier}</span></td>
-                <td>{item.drawingNumber||"—"}</td>
-                <td style={{fontSize:11}}>{item.description||"—"}</td>
-                <td style={{color:"#22d3a0",fontWeight:700}}>{item.neededQty}</td>
-                <td style={{color:"#2568FB",fontSize:11}}>{item.supplierConfirmation||"—"}</td>
-                <td>
-                  {item.status==="arrived"
-                    ?<span style={{color:"#22d3a0",fontSize:11,fontWeight:600}}>✓ {item.deliveredDate}</span>
-                    :<div style={{display:"flex",gap:5,alignItems:"center"}}>
-                      <input className="fi" type="date" style={{padding:"4px 6px",fontSize:11,width:130}} value={delivDate[item.id]||today()} onChange={e=>setDelivDate(d=>({...d,[item.id]:e.target.value}))}/>
-                      <button className="btn b-green btn-xs" disabled={arriving[item.id]} onClick={()=>markArrived(item)}>Mark Arrived</button>
-                    </div>
-                  }
-                </td>
-                <td>
-                  {item.invoiceAttachment
-                    ?<a href={item.invoiceAttachment.data} download={item.invoiceAttachment.name} style={{color:"#2568FB",fontSize:11,textDecoration:"none"}}><Icon name="file" size={12}/> {item.invoiceAttachment.name.slice(0,12)}</a>
-                    :<label style={{cursor:"pointer"}}><span className="btn b-gray btn-xs"><Icon name="clip" size={11}/>Attach</span><input type="file" style={{display:"none"}} accept=".pdf,.png,.jpg,.jpeg" onChange={e=>handleInvoice(item.id,e.target.files[0])}/></label>
-                  }
-                </td>
-                <td>
-                  {item.awbAttachment
-                    ?<a href={item.awbAttachment.data} download={item.awbAttachment.name} style={{color:"#2568FB",fontSize:11,textDecoration:"none"}}><Icon name="file" size={12}/> {item.awbAttachment.name.slice(0,12)}</a>
-                    :<label style={{cursor:"pointer"}}><span className="btn b-gray btn-xs"><Icon name="clip" size={11}/>Attach</span><input type="file" style={{display:"none"}} accept=".pdf,.png,.jpg,.jpeg" onChange={e=>handleAWB(item.id,e.target.files[0])}/></label>
-                  }
-                </td>
-                <td><span className={`badge ${item.status==="arrived"?"bgreen":"byellow"}`}>{item.status==="arrived"?"Arrived":"Confirmed"}</span></td>
-              </tr>
-            ))}</tbody>
-          </table></div>
-        )}
+        {!confirmedItems.length
+          ?<div className="empty">No confirmed orders yet. Items appear here once supplier confirmation is approved.</div>
+          :<div className="tw"><table>{tableHead}<tbody>{confirmedItems.map(item=><ItemRow key={item.id} item={item}/>)}</tbody></table></div>
+        }
       </div>
+
+      {/* All purchasing items — so logistics can see everything */}
+      {allPurchasingItems.length>0&&(
+        <div className="card">
+          <div className="ctitle"><Icon name="pkg"/>All Purchasing Items <span className="sub">({allPurchasingItems.length} total)</span></div>
+          <div className="tw"><table>{tableHead}<tbody>{allPurchasingItems.map(item=><ItemRow key={item.id} item={item}/>)}</tbody></table></div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2325,7 +2350,7 @@ function NotificationsPage({ notifs, markNotifRead, markAllRead }) {
 }
 
 // ─── Admin: All POs ───────────────────────────────────────────────────────────
-function AdminPOs({ pos, purchasingItems, consolidatedItems, quotRows, addNotif, loadAll }) {
+function AdminPOs({ pos, purchasingItems, consolidatedItems, addNotif, loadAll, users }) {
   const [editQty, setEditQty] = useState({});
   const [saving, setSaving] = useState({});
   const [sel, setSel] = useState(null);
@@ -2334,8 +2359,9 @@ function AdminPOs({ pos, purchasingItems, consolidatedItems, quotRows, addNotif,
     if (!qty||qty<1) return alert("Enter valid quantity");
     setSaving(s=>({...s,[po.id]:true}));
     await sb.from("purchase_orders").update({po_qty:qty}).eq("id",po.id);
-    const rows = quotRows.filter(r=>r.poId===po.id);
-    await Promise.all(rows.map(r=>sb.from("quotation_rows").update({needed_qty:(r.qtyPc||1)*qty}).eq("id",r.id)));
+    // Update needed_qty on BOM items stored in PO items array
+    const updatedItems = (po.items||[]).map(it=>({...it, neededQty:(it.qtyPc||1)*qty}));
+    await sb.from("purchase_orders").update({items:updatedItems}).eq("id",po.id);
     await addNotif("purchasing",`Admin set PO Qty for ${po.poNo} → ${qty}. BOM triage can now begin.`);
     setSaving(s=>{const n={...s};delete n[po.id];return n;});
     setEditQty(e=>{const n={...e};delete n[po.id];return n;});
@@ -2343,7 +2369,7 @@ function AdminPOs({ pos, purchasingItems, consolidatedItems, quotRows, addNotif,
   };
   return (
     <div className="page">
-      <FlowBanner active="s2" role={user?.role||""}/>
+      <FlowBanner active="s2" role="admin"/>
       <div style={{fontFamily:"Syne",fontSize:21,fontWeight:800,marginBottom:6}}>All POs <span style={{fontSize:13,color:"#3d4f63",fontWeight:400}}>(Admin)</span></div>
       <div style={{color:"#475569",fontSize:12,marginBottom:22}}>Step ② — Set PO Quantity for each order before purchasing can triage.</div>
       <div className="card">
